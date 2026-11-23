@@ -1,0 +1,13 @@
+{
+  "name": "pa-skills",
+  "private": true,
+  "description": "Skills de Claude Code reutilizables entre proyectos, con su instalador",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/install.test.mjs",
+    "instalar": "node install.mjs"
+  }
+}
