@@ -10,7 +10,7 @@ del navegador. Pinta una barra abajo a la derecha:
 
 - **«Señalar»** (o ⌥S): un clic en un elemento, o arrastrar para marcar una zona, abre una
   nota. Al guardarla (⌘↵) queda una chincheta numerada sobre el elemento.
-- **«Notas»**: la lista, con «Ir» y «Editar», y «Copiar en Markdown».
+- **«Notas»**: la lista, con «Ir», «Editar» y «Resuelta» (o «Reabrir»), y «Copiar en Markdown».
 - **«Chinchetas»** y **⇆**: esconderlas y llevar la barra al otro lado.
 
 Mientras está «Señalando…», los clics no llegan a la aplicación: nada se pulsa ni se guarda.
@@ -18,13 +18,14 @@ Las notas quedan en el `localStorage` del origen y sobreviven a recargas.
 
 Cada nota guarda:
 - la ruta y la ventana;
-- el elemento, su selector y su texto;
+- el elemento, su selector y el texto que se lee en él (sin los nombres de los iconos);
 - la caja, los estilos calculados y los de su contenedor;
 - **el componente cuya plantilla declara el elemento**, con su fichero y su línea si el
-  framework los da en desarrollo.
+  framework los da en desarrollo;
+- si está resuelta, cuándo.
 
-Lo último es lo que la hace útil: de cada nota se va derecho al `.html`, `.tsx`, `.vue` o
-`.svelte` que hay que tocar.
+Lo del componente es lo que la hace útil: de cada nota se va derecho al `.tsx`, `.vue` o
+`.svelte` que hay que tocar, y en Angular al `.ts` del componente y a su `.html` (abajo, §4).
 
 ## 1. Tener la aplicación en el panel
 
@@ -43,16 +44,22 @@ de una línea y se puede repetir tras cada recarga sin coste.
    - `public/` en Vite, Angular 17 o posterior, CRA y Next;
    - `src/assets/` en Angular antiguo;
    - `static/` en SvelteKit.
-2. Inyéctalo con `javascript_tool`. La ruta es relativa a `document.baseURI`, así que vale
-   también con un `base href`:
+2. Inyéctalo con `javascript_tool`. Espera a que cargue y devuelve la versión, así que carga
+   y comprobación van en una sola llamada; si ya estaba, no lo vuelve a cargar. La ruta es
+   relativa a `document.baseURI`, así que vale también con un `base href`:
 
    ```js
-   const s = document.createElement('script');
-   s.src = new URL('live-review.js', document.baseURI).href; // o 'assets/live-review.js'
-   document.head.append(s);
+   window.__liveReview?.version ?? await new Promise((ok, mal) => {
+     const s = document.createElement('script');
+     s.src = new URL('live-review.js', document.baseURI).href; // o 'assets/live-review.js'
+     s.onload = () => ok(window.__liveReview.version);
+     s.onerror = () => mal(new Error('No se pudo cargar ' + s.src));
+     document.head.append(s);
+   })
    ```
 
-3. Compruébalo: `window.__liveReview?.version` da `2`.
+3. Tiene que dar `3`. Un error de carga suele ser la carpeta equivocada, o un servidor que no
+   ve ficheros nuevos de los estáticos hasta reiniciarse.
 
 El fichero copiado **no se versiona**. Bórralo al terminar: un fichero sin seguir deja el
 repositorio con cambios, y hay herramientas que entonces se niegan a trabajar (un loop que
@@ -60,10 +67,12 @@ monta árboles de trabajo, por ejemplo). Si el proyecto tiene un árbol de traba
 probar, cópialo allí.
 
 **B. Pegándolo.** Si no hay estáticos a mano, lee el fichero y pásalo entero como texto a
-`javascript_tool`. Cuesta unos 9.000 tokens cada vez, así que úsalo solo si A no sirve.
+`javascript_tool`. Cuesta unos 10.000 tokens cada vez, así que úsalo solo si A no sirve.
 
 **Tras una recarga** (navegar entre pantallas con rutas en `#` no recarga, pero un cambio de
-código o F5 sí), vuelve a inyectarlo: las notas siguen ahí. Si la revisión va a ser larga y
+código o F5 sí), vuelve a inyectarlo: las notas siguen ahí. **Cada arreglo recarga la página**
+(el servidor de desarrollo la recarga al guardar un fichero), así que al comprobar un arreglo
+la barra ya no está: inyéctalo antes de `ir(n)` o de `resolver(n)`. Si la revisión va a ser larga y
 con recargas, propón cargarlo solo desde algo que no se versione del entorno de desarrollo.
 En un proyecto se hizo desde el `env.js` de un árbol de trabajo de pruebas. La decisión es
 del usuario.
@@ -88,9 +97,16 @@ existen a cierto ancho.
 3. Para cada nota:
    - `__liveReview.barra(false)` y `__liveReview.chinchetas(false)`, para capturas limpias;
    - `__liveReview.ir(n)` lleva a su pantalla y resalta el elemento;
-   - captura o `zoom`.
+   - captura y, sobre todo con ventanas anchas, `zoom`. La captura llega reducida al ancho de
+     la imagen (una ventana de 1.900 px puede llegar a 800, y el texto no se lee).
+     `__liveReview.caja(n)` da dónde está ahora la nota, en píxeles de la ventana: pásala a las
+     coordenadas que use la herramienta de captura (por la proporción entre el ancho de la
+     captura y el de la ventana) y haz `zoom` sobre ella con un margen.
 4. Interpreta los datos:
-   - `componente.plantilla.fichero:linea` es por donde empezar;
+   - `componente.plantilla.fichero:linea` es por donde empezar. **En Angular**, `fichero` es el
+     `.ts` del componente y `linea`, la de su clase: con `templateUrl`, el elemento está en
+     `htmlProbable`, el `.html` de al lado. Es una deducción: si no existe, la plantilla va en
+     línea, en el propio `.ts`;
    - `dentroDe`, el componente de librería que envuelve al elemento;
    - `estilos` y `contenedor` dan anchos, márgenes y flex o grid sin abrir las DevTools;
    - una nota de zona trae `dentro`: los elementos que cubre.
@@ -112,12 +128,16 @@ fichero). `__liveReview.componenteDe(elemento)` prueba el adaptador sobre cualqu
 - **Devuelve una tabla**: nota, dónde (pantalla y fichero), causa y arreglo propuesto.
   Pregunta antes de tocar código. Las notas son la opinión del usuario: lo que no entiendas
   de una, pregúntalo, en vez de interpretarlo.
+- **Al arreglar una, compruébala en la página y márcala**: `__liveReview.resolver(n)`. Su
+  chincheta pasa a gris y la lista la tacha, así que en la siguiente ronda el usuario ve qué
+  está hecho y señala solo lo nuevo. `resolver(n, false)` la reabre; el usuario también puede
+  hacerlo desde la lista.
 
 ## 6. Al terminar
 
 - Borra el fichero copiado a los estáticos (A).
-- Las notas siguen en el `localStorage` del navegador. `__liveReview.vaciar()` las quita si
-  el usuario no las quiere.
+- Las notas siguen en el `localStorage` del navegador, también las resueltas.
+  `__liveReview.vaciar()` las quita si el usuario no las quiere.
 
 ## Lo que conviene saber
 
@@ -145,11 +165,13 @@ fichero). `__liveReview.componenteDe(elemento)` prueba el adaptador sobre cualqu
 
 | Llamada | Qué hace |
 | --- | --- |
-| `notas()` | copia de las notas, con todos sus datos |
+| `notas()` | copia de las notas, con todos sus datos (la resuelta, con `resuelta` y su fecha) |
 | `markdown()` | las notas en Markdown, por pantalla |
 | `ir(n)` | lleva a la pantalla de la nota `n` y resalta su elemento |
+| `caja(n)` | dónde está ahora la nota `n` en la ventana, para hacer `zoom`; `null` fuera de su pantalla |
+| `resolver(n)`, `resolver(n, false)` | marca la nota `n` como resuelta, o la reabre |
 | `activar(true/false)` | entra o sale del modo de señalar |
 | `barra(false/true)`, `chinchetas(false/true)` | esconde o enseña la barra y las chinchetas, para capturas |
 | `borrar(n)`, `vaciar()` | quita una nota o todas |
 | `componenteDe(el)` | el componente de un elemento, como lo guarda una nota |
-| `version` | `2` |
+| `version` | `3` |

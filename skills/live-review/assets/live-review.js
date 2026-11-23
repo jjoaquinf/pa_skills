@@ -41,6 +41,8 @@
     .marco { position: fixed; display: none; pointer-events: none; border: 2px dashed #d81b60; background: rgba(216, 27, 96, .12); }
     .chincheta { position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 2px solid #fff; border-radius: 50%; background: #d81b60; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; cursor: pointer; box-shadow: 0 1px 4px rgba(0, 0, 0, .45); }
     .chincheta:hover { transform: scale(1.15); }
+    .chincheta.resuelta, .num.resuelta { background: #90a4ae; }
+    .nota.resuelta .texto { color: #90a4ae; text-decoration: line-through; }
     .barra { position: fixed; right: 16px; bottom: 16px; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 20px; background: #263238; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); cursor: default; }
     .barra button { padding: 6px 12px; border: 0; border-radius: 16px; background: transparent; color: #eceff1; font-size: 13px; }
     .barra button:hover { background: rgba(255, 255, 255, .14); }
@@ -156,8 +158,60 @@
     return s;
   }
 
+  // Lo que no es texto para quien lee: los iconos que se pintan con ligaduras (el nombre del
+  // icono va como texto: «expand_more»), lo oculto a los lectores de pantalla y lo que no se pinta.
+  const SIN_TEXTO =
+    'mat-icon, .material-icons, .material-icons-outlined, .material-symbols-outlined, ' +
+    '.material-symbols-rounded, .material-symbols-sharp, [aria-hidden="true"], svg, script, style, template';
+
+  /**
+   * Si entre dos trozos de texto (los elementos a y b que los contienen) hay un límite que no es
+   * en línea: una celda, un bloque, un elemento de un flex. Se mira todo el camino hasta su
+   * antepasado común, porque dos celdas suelen pintar su texto en un span en línea cada una.
+   */
+  function separados(a, b) {
+    const deA = [];
+    for (let n = a; n; n = n.parentElement) deA.push(n);
+    let comun = b;
+    while (comun && !deA.includes(comun)) comun = comun.parentElement;
+    const corta = (n) => {
+      try {
+        return getComputedStyle(n).display !== 'inline';
+      } catch {
+        return true;
+      }
+    };
+    for (const inicio of [a, b]) {
+      for (let n = inicio; n && n !== comun; n = n.parentElement) if (corta(n)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * El texto que se lee en el elemento: sin los nombres de los iconos y con un espacio entre
+   * celdas, bloques o elementos de un flex (textContent los pegaba: «fact_checkSolicitudesexpand_more»).
+   * Si el elemento señalado es él mismo un icono, su texto sí cuenta.
+   */
   function textoDe(el, max = 100) {
-    return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, max);
+    const trozos = [];
+    let largo = 0;
+    let anterior = null;
+    const paseo = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = paseo.nextNode(); n && largo < max * 2; n = paseo.nextNode()) {
+      const padre = n.parentElement;
+      const fuera = padre && padre.closest(SIN_TEXTO);
+      if (fuera && fuera !== el && el.contains(fuera)) continue;
+      const t = n.nodeValue.replace(/\s+/g, ' ');
+      if (!t.trim()) {
+        if (trozos.length) trozos.push(' ');
+        continue;
+      }
+      if (anterior && padre !== anterior && separados(anterior, padre)) trozos.push(' ');
+      trozos.push(t);
+      largo += t.length;
+      anterior = padre;
+    }
+    return trozos.join('').replace(/\s+/g, ' ').trim().slice(0, max);
   }
 
   function selector(el) {
@@ -251,6 +305,10 @@
       const c = { nombre: limpio((dbg && dbg.className) || ctor.name), etiqueta, libreria };
       if (fichero) c.fichero = fichero;
       if (dbg && dbg.lineNumber) c.linea = dbg.lineNumber;
+      // debugInfo da el .ts y la línea de la clase, no la plantilla. Con templateUrl (lo
+      // habitual) está en el .html de al lado; el navegador no puede comprobar que existe,
+      // ni si la plantilla va en línea en el propio .ts: por eso es «probable».
+      if (fichero && !libreria && /\.ts$/.test(fichero)) c.htmlProbable = fichero.replace(/\.ts$/, '.html');
       return c;
     };
     let inst = null;
@@ -526,7 +584,8 @@
   function pintarBarra() {
     btnSenalar.classList.toggle('activo', activo);
     btnSenalar.textContent = activo ? 'Señalando…' : 'Señalar';
-    btnNotas.textContent = `Notas (${notas.length})`;
+    const resueltas = notas.filter((x) => x.resuelta).length;
+    btnNotas.textContent = `Notas (${notas.length - resueltas}${resueltas ? ` · ${resueltas} ✓` : ''})`;
     btnNotas.classList.toggle('activo', !panel.hidden);
     btnVer.classList.toggle('activo', prefs.ver);
     ayuda.hidden = !activo;
@@ -559,11 +618,13 @@
       for (const x of lista) {
         const p = x.componente && x.componente.plantilla;
         const meta = (p ? p.nombre + ' · ' : '') + (x.tipo === 'zona' ? 'zona en ' : '') + x.elemento;
+        const r = x.resuelta ? ' resuelta' : '';
         html +=
-          `<div class="nota"><span class="num">${x.n}</span>` +
+          `<div class="nota${r}"><span class="num${r}">${x.n}</span>` +
           `<div class="cuerpo"><div class="texto">${esc(x.texto)}</div><div class="meta" title="${esc(meta)}">${esc(meta)}</div></div>` +
           `<div class="ops"><button data-accion="ir" data-id="${x.id}">Ir</button>` +
-          `<button data-accion="editar" data-id="${x.id}">Editar</button></div></div>`;
+          `<button data-accion="editar" data-id="${x.id}">Editar</button>` +
+          `<button data-accion="resolver" data-id="${x.id}">${x.resuelta ? 'Reabrir' : 'Resuelta'}</button></div></div>`;
       }
     }
     panel.innerHTML = html;
@@ -591,7 +652,8 @@
           chinchetas.set(nota.id, p);
         }
         p.textContent = nota.n;
-        p.title = nota.texto;
+        p.classList.toggle('resuelta', !!nota.resuelta);
+        p.title = nota.resuelta ? `${nota.texto} (resuelta)` : nota.texto;
         p.style.left = x + 'px';
         p.style.top = y + 'px';
         vivas.add(nota.id);
@@ -769,6 +831,15 @@
     guardar();
   }
 
+  /** Marca una nota como resuelta (con la fecha) o la reabre. Sigue en la lista, en gris. */
+  function resolverNota(nota, si = true) {
+    if (!nota) return false;
+    if (si) nota.resuelta = new Date().toISOString();
+    else delete nota.resuelta;
+    guardar();
+    return true;
+  }
+
   function irA(nota) {
     if (!nota) return false;
     if (rutaDe(rutaActual()) !== rutaDe(nota.ruta)) navegar(nota.ruta);
@@ -790,17 +861,21 @@
   // ---------------------------------------------------------------- Markdown
 
   function markdown() {
-    let md = `# Notas de revisión (${notas.length})\n`;
+    const resueltas = notas.filter((x) => x.resuelta).length;
+    let md = `# Notas de revisión (${notas.length}${resueltas ? `, ${resueltas} resueltas` : ''})\n`;
     for (const [ruta, lista] of agrupar()) {
       md += `\n## \`${ruta}\`\n\n`;
       for (const x of lista) {
         const p = x.componente && x.componente.plantilla;
-        md += `${x.n}. ${x.texto.replace(/\s*\n\s*/g, ' / ')}\n`;
+        md += `${x.n}. ${x.resuelta ? '(Resuelta) ' : ''}${x.texto.replace(/\s*\n\s*/g, ' / ')}\n`;
         md +=
           `   - ${x.tipo === 'zona' ? `Zona de ${x.zona.ancho}×${x.zona.alto} en` : 'En'} \`${x.elemento}\`` +
           (x.textoElemento ? ` «${x.textoElemento.slice(0, 60)}»` : '') +
           `, ventana de ${x.ventana.ancho}×${x.ventana.alto}\n`;
-        if (p) md += `   - Plantilla: ${p.nombre}${p.fichero ? ` (\`${p.fichero}${p.linea ? ':' + p.linea : ''}\`)` : ''}\n`;
+        if (p) {
+          md += `   - Plantilla: ${p.nombre}${p.fichero ? ` (\`${p.fichero}${p.linea ? ':' + p.linea : ''}\`)` : ''}`;
+          md += p.htmlProbable ? `; con templateUrl, \`${p.htmlProbable}\`\n` : '\n';
+        }
       }
     }
     return md;
@@ -944,6 +1019,9 @@
         break;
       case 'ir':
         irA(nota);
+        break;
+      case 'resolver':
+        resolverNota(nota, !(nota && nota.resuelta));
         break;
       case 'editar':
         if (nota) {
@@ -1095,7 +1173,7 @@
   }
 
   window.__liveReview = {
-    version: 2,
+    version: 3,
     /** Copia de las notas, con todos sus datos. */
     notas: () => JSON.parse(JSON.stringify(notas)),
     markdown,
@@ -1110,6 +1188,17 @@
       ui.style.display = si ? '' : 'none';
     },
     ir: (n) => irA(notas.find((x) => x.n === n)),
+    /** Marca la nota n como resuelta (o la reabre con false): su chincheta pasa a gris. */
+    resolver: (n, si = true) => resolverNota(notas.find((x) => x.n === n), si),
+    /**
+     * Dónde está ahora la nota n en la ventana, en píxeles de CSS (tras ir(n), que la centra),
+     * o null si no está en esta pantalla. Para hacer zoom sobre ella en una captura reducida.
+     */
+    caja: (n) => {
+      const nota = notas.find((x) => x.n === n);
+      const r = nota && rutaDe(rutaActual()) === rutaDe(nota.ruta) ? cajaDe(nota) : null;
+      return r && { x: Math.round(r.left), y: Math.round(r.top), ancho: Math.round(r.width), alto: Math.round(r.height), ventana: { ancho: innerWidth, alto: innerHeight } };
+    },
     borrar: (n) => {
       notas = notas.filter((x) => x.n !== n);
       guardar();
